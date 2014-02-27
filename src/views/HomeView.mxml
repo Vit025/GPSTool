@@ -28,7 +28,7 @@ import mx.formatters.DateFormatter;
 		
 		private function init():void
 		{
-			//"zjuzju"
+			
 			NativeApplication.nativeApplication.addEventListener(Event.EXITING, onExiting);
 			NativeApplication.nativeApplication.systemIdleMode = SystemIdleMode.KEEP_AWAKE;
 			
