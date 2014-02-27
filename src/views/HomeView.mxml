@@ -1,0 +1,305 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:View xmlns:fx="http://ns.adobe.com/mxml/2009" 
+        xmlns:s="library://ns.adobe.com/flex/spark" 
+		title="HomeView" backgroundColor="#000000" addedToStage="init()" actionBarVisible="false" enterFrame="checkGPS()">
+		
+	<fx:Script>
+		<![CDATA[
+import flash.desktop.NativeApplication;
+import flash.desktop.SystemIdleMode;
+import flash.events.Event;
+import flash.events.GeolocationEvent;
+import flash.sensors.Geolocation;
+import mx.formatters.DateFormatter;
+		
+		private var isPlaying:Boolean = false;
+		private var isBackward:Boolean = false;
+		private var gpsEnabled:Boolean = false;
+		private var totalTrip:Number = 0;
+		private var trips:Array = [0];
+		private var currentTrip:int = 0;
+		private var geo:Geolocation;
+		
+		private var lastLongitude:Number;
+		private var lastLatitude:Number;
+		
+		private var dateFormatter:DateFormatter;
+		private var todayString:String;
+		
+		private function init():void
+		{
+			NativeApplication.nativeApplication.addEventListener(Event.EXITING, onExiting);
+			NativeApplication.nativeApplication.systemIdleMode = SystemIdleMode.KEEP_AWAKE;
+			
+			var _w:Number = stage.stageWidth / 3;
+			_w = ((_w << 0) == _w)? _w:(_w > 0)? _w >> 0 : (_w - 1) >> 0;
+			clearBtn.left = 0;
+			clearBtn.width = _w;
+			clearBtn.bottom = 0;
+			
+			backBtn.right = 0;
+			backBtn.width = _w;
+			backBtn.bottom = 0;
+			
+			previousBtn.left = 0;
+			previousBtn.width = _w;
+			previousBtn.bottom = clearBtn.height;
+			
+			nextBtn.right = 0;
+			nextBtn.width = _w;
+			nextBtn.bottom = backBtn.height;
+			
+			playStopBtn.width = stage.stageWidth - _w - _w;
+			playStopBtn.bottom = backBtn.height;
+			
+			status.bottom = 30;
+			
+			checkGPS(true);
+			
+			getLocalData();
+		}
+		
+		private function onExiting(e:Event):void 
+		{
+			e.preventDefault();
+		}
+		
+		private function checkGPS(firstRun:Boolean = false):void
+		{
+			var prevStatus:Boolean = gpsEnabled;
+			if (Geolocation.isSupported)
+			{
+				if (!geo)
+				{
+					geo = new Geolocation(); 
+					geo.addEventListener(GeolocationEvent.UPDATE, updateHandler); 
+				}
+				gpsEnabled = true;
+				if (prevStatus != gpsEnabled)
+				{
+					setPlayState();
+					updateView();
+				}
+			}
+			else
+			{
+				gpsEnabled = false;
+				if (prevStatus != gpsEnabled || firstRun)
+				{
+					clearGPSData();
+					if (isPlaying)
+					{
+						isPlaying = false;
+					}
+					setPlayState();
+					updateView();
+				}
+			}
+		}
+		
+		private function updateHandler(event:GeolocationEvent):void 
+		{
+			if (!isPlaying) return;
+			
+			if (isNaN(lastLatitude) || isNaN(lastLongitude))
+			{
+				lastLongitude = event.longitude;
+				lastLatitude = event.latitude;
+				return;
+			}
+			
+			var distance:Number = GeoDistance.getDistance(lastLatitude, lastLongitude, event.latitude, event.longitude);
+			distance = (distance > 0)? (distance + .5) >> 0 : (distance - .5) >> 0;
+			
+			if (isBackward)
+			{
+				trips[currentTrip] -= distance;
+				totalTrip -= distance;
+			}
+			else
+			{
+				trips[currentTrip] += distance;
+				totalTrip += distance;
+			}
+			
+			saveLocalData();
+			
+			trace("latitude: " + event.latitude.toString() + "\n" 
+					+ "longitude: " + event.longitude.toString() + "\n" 
+					+ "altitude: " + event.altitude.toString() 
+					+ "speed: " + event.speed.toString() 
+					+ "heading: " + event.heading.toString() 
+					+ "horizontal accuracy: " + event.horizontalAccuracy.toString() 
+					+ "vertical accuracy: " + event.verticalAccuracy.toString());
+		}
+		
+		private function saveLocalData():void 
+		{
+			if (!todayString)
+			{
+				dateFormatter = new DateFormatter;
+				dateFormatter.formatString = "DDMMYYY";
+				todayString = dateFormatter.format(new Date());
+			}
+			
+			var data:Object = {
+				total:totalTrip,
+				trips:trips,
+				current:currentTrip
+			}
+			
+			LocalDataManager.setValue(todayString, JSON.stringify(data));
+		}
+		
+		private function getLocalData():void 
+		{
+			if (!todayString)
+			{
+				dateFormatter = new DateFormatter;
+				dateFormatter.formatString = "DDMMYYY";
+				todayString = dateFormatter.format(new Date());
+			}
+			
+			var dataString:String = LocalDataManager.getString(todayString);
+			
+			if (dataString.length == 0) {
+				return;
+			}
+			
+			var data:Object = JSON.parse(dataString);
+			
+			totalTrip = data.total;
+			trips = data.trips;
+			currentTrip = data.currentTrip;
+			
+			updateView();
+		}
+		
+		private function onPlayStop():void
+		{
+			isPlaying = !isPlaying;
+			setPlayState();
+			if (!isPlaying)
+			{
+				clearGPSData();
+			}
+		}
+		
+		private function setPlayState():void
+		{
+			if (!gpsEnabled || isNaN(lastLatitude) || isNaN(lastLongitude))
+			{
+				status.text = "No GPS";
+				playStopBtn.label = "...";
+				return;
+			}
+			if (isPlaying)
+			{
+				status.text = "Playing";
+				playStopBtn.label = "Pause";
+			}
+			else
+			{
+				status.text = "Paused";
+				playStopBtn.label = "Go!";
+			}
+		}
+		
+		private function onPrevious():void
+		{
+			clearGPSData();
+			if (!gpsEnabled)
+			{
+				return;
+			}
+			if (currentTrip > -1)
+			{
+				currentTrip--;
+			}
+			isPlaying = false;
+			setPlayState();
+			updateView();
+			
+			saveLocalData();
+		}
+		
+		private function clearGPSData():void 
+		{
+			lastLongitude = NaN;
+			lastLatitude = NaN;
+		}
+		
+		private function onNext():void
+		{
+			clearGPSData();
+			if (!gpsEnabled)
+			{
+				return;
+			}
+			currentTrip++;
+			
+			while (trips.length < currentTrip + 1)
+			{
+				trips[trips.length] = 0;
+			}
+			isPlaying = false;
+			setPlayState();
+			updateView();
+			
+			saveLocalData();
+		}
+		
+		private function updateView():void 
+		{
+			var kms:String = (trips[currentTrip] * .0001).toString();
+			var s:Array = kms.split(".");
+			if (s.length < 2)
+			{
+				s[1] = "000";
+			}
+			else
+			{
+				while(s[1].length < 3)
+				{
+					s[1] += "0";
+				}
+			}
+			
+			currentKMS.text = s.join(".");
+		}
+		
+		private function onClear():void
+		{
+			if (!gpsEnabled)
+			{
+				return;
+			}
+		}
+		
+		private function onBack():void
+		{
+			if (!gpsEnabled)
+			{
+				return;
+			}
+		}
+		
+		]]>
+	</fx:Script>
+	
+	<fx:Declarations>
+		<!-- Place non-visual elements (e.g., services, value objects) here -->
+	</fx:Declarations>
+	
+	<s:Label id="currentKMS" color="#FFFFFF" fontSize="86" fontWeight="bold" text="0.000" horizontalCenter="0" verticalCenter="-200" />
+	<s:Label id="totalKMS" color="#FFFFFF" fontSize="36" fontWeight="bold" text="0.000" horizontalCenter="0" verticalCenter="-120" />
+	
+	<s:Label id="status" color="#FFFFFF" text="No GPS" horizontalCenter="0"/>
+	
+	<s:Button id="previousBtn" label="Previous" height="100" click="onPrevious()" />
+	<s:Button id="playStopBtn" label="Go!" horizontalCenter="0"  height="100" click="onPlayStop()" />
+	<s:Button id="nextBtn" label="Next" height="100" click="onNext()"/>
+	<s:Button id="backBtn" label="Backward" height="100"/>
+	<s:Button id="clearBtn" label="Clear" height="100"/>
+	
+</s:View>
